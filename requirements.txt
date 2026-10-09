@@ -1,5 +1,4 @@
 python-telegram-bot
-apscheduler
+aiohttp
+nest-asyncio
 pytz
-nest_asyncio
-httpx
