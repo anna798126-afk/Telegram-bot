@@ -4,6 +4,7 @@ import json
 import os
 import re
 import aiohttp
+from aiohttp import web
 import pytz
 from telegram import Bot, Update
 from telegram.ext import (
@@ -502,7 +503,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await update.message.reply_text(f"✅<code>{clean_addr}</code>\n\n💰 USDT：{usdt:,.2f}\n⚡ TRX：{trx:,.2f}", parse_mode="HTML")
 
-def main():
+async def handle_web_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def main():
+    port = int(os.environ.get("PORT", 10000))
+    web_app = web.Application()
+    web_app.add_routes([web.get("/", handle_web_ping)])
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Web Server giả lập đã mở thành công trên cổng {port}")
+
+    temp_bot = Bot(token=BOT_TOKEN)
+    try:
+        await temp_bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        print(f"⚠️ Lỗi khi xóa Webhook: {e}")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("all", all_command))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
@@ -510,8 +529,12 @@ def main():
     if app.job_queue:
         app.job_queue.run_repeating(monitor_wallets_task, interval=30, first=1)
 
-    print("🚀 Bot đã khởi chạy thành công...")
-    app.run_polling(drop_pending_updates=True)
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True, poll_interval=1.0)
+    print("🚀 Bot đã khởi chạy thành công và đang chạy vĩnh viễn...")
+
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
