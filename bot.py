@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-import 
+import json
 import os
 import re
 import aiohttp
@@ -15,22 +15,14 @@ from telegram.ext import (
     filters,
 )
 
-# Kích hoạt nest_asyncio để chạy trong Colab / Notebook
 nest_asyncio.apply()
 
-# -------------------------------------------------------------
-# CẤU HÌNH BOT & MÚI GIỜ
-# -------------------------------------------------------------
 BOT_TOKEN = "8823333396:AAGhZC3Y2NGfZawZO-mdluPD-vS87sahqV8"
 DB_FILE = "wallets.json"
 QR_DB_FILE = "qr_codes.json"
 CHINA_TZ = pytz.timezone("Asia/Shanghai")
 TRONGRID_API_KEY = ""
 
-
-# -------------------------------------------------------------
-# QUẢN LÝ LƯU TRỮ DỮ LIỆU
-# -------------------------------------------------------------
 def load_wallets():
     if os.path.exists(DB_FILE):
         try:
@@ -40,11 +32,9 @@ def load_wallets():
             return {}
     return {}
 
-
 def save_wallets(data):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-
 
 def load_qr_codes():
     if os.path.exists(QR_DB_FILE):
@@ -55,15 +45,10 @@ def load_qr_codes():
             return {}
     return {}
 
-
 def save_qr_codes(data):
     with open(QR_DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-
-# -------------------------------------------------------------
-# LẤY GIÁ BINANCE P2P (Dùng chung cho cả VND và CNY)
-# -------------------------------------------------------------
 async def get_binance_p2p_list(fiat_currency: str, limit: int = 10):
     url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
     payload = {
@@ -74,13 +59,12 @@ async def get_binance_p2p_list(fiat_currency: str, limit: int = 10):
         "payTypes": [],
         "publisherType": None,
         "rows": limit,
-        "tradeType": "BUY",  # Mua USDT (thấy giá merchant bán)
+        "tradeType": "BUY",
     }
     headers = {
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
-
     items = []
     try:
         async with aiohttp.ClientSession() as session:
@@ -96,21 +80,14 @@ async def get_binance_p2p_list(fiat_currency: str, limit: int = 10):
                         items.append((price, nickname))
     except Exception as e:
         print(f"Lỗi lấy giá Binance P2P {fiat_currency}: {e}")
-
     return items
 
-
-# -------------------------------------------------------------
-# TRUY VẤN SỐ DƯ VÍ
-# -------------------------------------------------------------
 async def get_wallet_balance(address: str):
     if not address or len(address) != 34 or not address.startswith("T"):
         return None, None
-
     headers_gen = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-
     async with aiohttp.ClientSession() as session:
         try:
             url1 = f"https://apilist.tronscanapi.com/api/account/tokens?address={address}"
@@ -147,19 +124,13 @@ async def get_wallet_balance(address: str):
                         return usdt, trx
         except Exception:
             pass
-
     return None, None
 
-
-# -------------------------------------------------------------
-# LẤY THÔNG TIN GIAO DỊCH CHI TIẾT
-# -------------------------------------------------------------
 async def get_latest_transaction_details(address: str):
     url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=1"
     headers = {"Accept": "application/json"}
     if TRONGRID_API_KEY:
         headers["TRON-PRO-API-KEY"] = TRONGRID_API_KEY
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as res:
@@ -170,162 +141,113 @@ async def get_latest_transaction_details(address: str):
                         tx = tx_list[0]
                         sender = tx.get("from") or tx.get("from_address") or "未知地址"
                         receiver = tx.get("to") or tx.get("to_address") or "未知地址"
-                        
                         tx_hash = tx.get("transaction_id", "")
                         block = "N/A"
-
                         if tx_hash:
                             tronscan_url = f"https://apilist.tronscanapi.com/api/transaction-info?hash={tx_hash}"
-                            headers_gen = {
-                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                            }
+                            headers_gen = {"User-Agent": "Mozilla/5.0"}
                             async with session.get(tronscan_url, headers=headers_gen, timeout=aiohttp.ClientTimeout(total=4)) as scan_res:
                                 if scan_res.status == 200:
                                     scan_data = await scan_res.json()
                                     block = scan_data.get("block") or scan_data.get("blockNumber") or "N/A"
-
-                        if tx_hash and len(tx_hash) > 14:
-                            masked_hash = f"{tx_hash[:8]}...{tx_hash[-6:]}"
-                        else:
-                            masked_hash = tx_hash if tx_hash else "N/A"
-
+                        masked_hash = f"{tx_hash[:8]}...{tx_hash[-6:]}" if tx_hash and len(tx_hash) > 14 else (tx_hash or "N/A")
                         ts = tx.get("block_timestamp", 0)
                         if ts > 0:
                             dt = datetime.datetime.fromtimestamp(ts / 1000.0, tz=pytz.utc).astimezone(CHINA_TZ)
                             tx_time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                         else:
                             tx_time_str = datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
                         return sender, receiver, str(block), masked_hash, tx_time_str
     except Exception as e:
         print(f"Lỗi lấy chi tiết giao dịch {address}: {e}")
-
     now_cn = datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     return "未知地址", "未知地址", "N/A", "N/A", now_cn
 
-
-# -------------------------------------------------------------
-# TÍNH TOÁN LẠI TOÀN BỘ GIAO DỊCH TRONG NGÀY TỪ BLOCKCHAIN (CHO MỌI VÍ)
-# -------------------------------------------------------------
 async def recalculate_today_from_chain(address: str):
     url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=100"
     headers = {"Accept": "application/json"}
     if TRONGRID_API_KEY:
         headers["TRON-PRO-API-KEY"] = TRONGRID_API_KEY
-
     total_in = 0.0
     total_out = 0.0
-
     try:
         now_local = datetime.datetime.now(CHINA_TZ)
         start_of_day = datetime.datetime(now_local.year, now_local.month, now_local.day, 0, 0, 0, tzinfo=CHINA_TZ)
         end_of_day = datetime.datetime(now_local.year, now_local.month, now_local.day, 23, 59, 59, tzinfo=CHINA_TZ)
-
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as res:
                 if res.status == 200:
                     data = await res.json()
                     for tx in data.get("data", []):
                         ts = tx.get("block_timestamp", 0)
-                        if ts > 0:
-                            dt = datetime.datetime.fromtimestamp(ts / 1000.0, tz=pytz.utc).astimezone(CHINA_TZ)
-                        else:
-                            continue
-
-                        if start_of_day <= dt <= end_of_day:
+                        dt = datetime.datetime.fromtimestamp(ts / 1000.0, tz=pytz.utc).astimezone(CHINA_TZ) if ts > 0 else None
+                        if dt and start_of_day <= dt <= end_of_day:
                             to_addr = tx.get("to") or tx.get("to_address") or ""
                             from_addr = tx.get("from") or tx.get("from_address") or ""
                             raw_val = float(tx.get("value", 0))
-                            
                             token_info = tx.get("token_info", {})
                             decimals = int(token_info.get("decimals", 6)) if isinstance(token_info, dict) else 6
                             value = raw_val / (10**decimals)
-
                             if to_addr.lower() == address.lower():
                                 total_in += value
                             elif from_addr.lower() == address.lower():
                                 total_out += value
     except Exception as e:
         print(f"Lỗi tính toán lại blockchain cho {address}: {e}")
-
     profit = total_in - total_out
     return total_in, total_out, profit
 
-
-# -------------------------------------------------------------
-# TRUY VẤN LỊCH SỬ GIAO DỊCH TRONG NGÀY (LỆNH "交易")
-# -------------------------------------------------------------
 async def get_recent_transactions_today(address: str, limit=5):
     url = f"https://api.trongrid.io/v1/accounts/{address}/transactions/trc20?limit=20"
     headers = {"Accept": "application/json"}
     if TRONGRID_API_KEY:
         headers["TRON-PRO-API-KEY"] = TRONGRID_API_KEY
-
     tx_list = []
     try:
         now_local = datetime.datetime.now(CHINA_TZ)
         start_of_day = datetime.datetime(now_local.year, now_local.month, now_local.day, 0, 0, 0, tzinfo=CHINA_TZ)
         end_of_day = datetime.datetime(now_local.year, now_local.month, now_local.day, 23, 59, 59, tzinfo=CHINA_TZ)
-
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as res:
                 if res.status == 200:
                     data = await res.json()
                     for tx in data.get("data", []):
                         ts = tx.get("block_timestamp", 0)
-                        if ts > 0:
-                            dt = datetime.datetime.fromtimestamp(ts / 1000.0, tz=pytz.utc).astimezone(CHINA_TZ)
-                        else:
-                            continue
-
-                        if start_of_day <= dt <= end_of_day:
+                        dt = datetime.datetime.fromtimestamp(ts / 1000.0, tz=pytz.utc).astimezone(CHINA_TZ) if ts > 0 else None
+                        if dt and start_of_day <= dt <= end_of_day:
                             to_addr = tx.get("to") or tx.get("to_address") or ""
                             raw_val = float(tx.get("value", 0))
-                            
                             token_info = tx.get("token_info", {})
                             decimals = int(token_info.get("decimals", 6)) if isinstance(token_info, dict) else 6
                             symbol = token_info.get("symbol", "USDT").upper() if isinstance(token_info, dict) else "USDT"
                             value = raw_val / (10**decimals)
-
                             time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                             tx_type = "今日转入" if to_addr.lower() == address.lower() else "今日转出"
                             tx_list.append(f"{tx_type}：{value:,.2f} {symbol}    （{time_str}）")
-                            
                             if len(tx_list) >= limit:
                                 break
     except Exception as e:
         print(f"Lỗi lấy giao dịch {address}: {e}")
-
     return tx_list
 
-
-# -------------------------------------------------------------
-# TASK TỰ ĐỘNG BÁO BIẾN ĐỘNG SỐ DƯ (ĐÃ ÁP DỤNG CHO MỌI VÍ)
-# -------------------------------------------------------------
 async def monitor_wallets_task(context: ContextTypes.DEFAULT_TYPE):
     try:
         wallets = load_wallets()
         for chat_id, user_wallets in list(wallets.items()):
             for address, info in list(user_wallets.items()):
                 curr_usdt, curr_trx = await get_wallet_balance(address)
-
                 if curr_usdt is not None and curr_trx is not None:
                     last_usdt = info.get("last_usdt")
-                    last_trx = info.get("last_trx")
                     memo = info.get("memo", "")
-                    
                     memo_str = f" {memo} 入" if memo else " 入"
                     memo_str_out = f" {memo} 出" if memo else " 出"
-
                     notify_msg = ""
                     total_in, total_out, profit = 0.0, 0.0, 0.0
 
-                    # 1. NHẬN USDT (INCOME)
                     if last_usdt is not None and curr_usdt > last_usdt + 0.01:
                         amount = curr_usdt - last_usdt
                         sender, _, block, masked_hash, tx_time_str = await get_latest_transaction_details(address)
                         total_in, total_out, profit = await recalculate_today_from_chain(address)
-                        
                         notify_msg = (
                             f"🔺 <b>收入通知</b>\n\n"
                             f"链：<b>TRC (Tron)</b>\n"
@@ -341,13 +263,10 @@ async def monitor_wallets_task(context: ContextTypes.DEFAULT_TYPE):
                             f"💰 USDT 余额: <b>{curr_usdt:,.2f}</b>\n"
                             f"⚡️ TRX 余额: <b>{curr_trx:,.2f}</b>"
                         )
-
-                    # 2. CHUYỂN USDT ĐI (OUTCOME)
                     elif last_usdt is not None and curr_usdt < last_usdt - 0.01:
                         amount = last_usdt - curr_usdt
                         _, receiver, block, masked_hash, tx_time_str = await get_latest_transaction_details(address)
                         total_in, total_out, profit = await recalculate_today_from_chain(address)
-                        
                         notify_msg = (
                             f"🔻 <b>转出通知</b>\n\n"
                             f"链：<b>TRC (Tron)</b>\n"
@@ -366,57 +285,39 @@ async def monitor_wallets_task(context: ContextTypes.DEFAULT_TYPE):
 
                     if notify_msg:
                         try:
-                            await context.bot.send_message(
-                                chat_id=int(chat_id), text=notify_msg, parse_mode="HTML"
-                            )
+                            await context.bot.send_message(chat_id=int(chat_id), text=notify_msg, parse_mode="HTML")
                         except Exception as e:
                             print(f"Lỗi gửi tin nhắn: {e}")
 
                     wallets[chat_id][address]["last_usdt"] = curr_usdt
                     wallets[chat_id][address]["last_trx"] = curr_trx
-                    
                     today_str = datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
                     wallets[chat_id][address]["last_date"] = today_str
                     if notify_msg:
                         wallets[chat_id][address]["total_in"] = total_in
                         wallets[chat_id][address]["total_out"] = total_out
-
                     save_wallets(wallets)
-
     except Exception as e:
         print(f"Lỗi monitor loop: {e}")
 
-
-# -------------------------------------------------------------
-# XỬ LÝ LỆNH VÀ TIN NHẮN TỰ ĐỘNG
-# -------------------------------------------------------------
 async def all_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     wallets = load_wallets()
-
     if chat_id not in wallets or not wallets[chat_id]:
         await update.message.reply_text("📋 Danh sách ví đang trống.")
         return
-
-    msg_lines = [
-        f"{idx}. <code>{addr}</code>"
-        for idx, addr in enumerate(wallets[chat_id].keys(), 1)
-    ]
+    msg_lines = [f"{idx}. <code>{addr}</code>" for idx, addr in enumerate(wallets[chat_id].keys(), 1)]
     await update.message.reply_text("\n".join(msg_lines), parse_mode="HTML")
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-
     raw_text = (update.message.text or update.message.caption or "").strip()
     text = raw_text.split("\n")[-1].strip() if raw_text else ""
-
     chat_id = str(update.effective_chat.id)
     wallets = load_wallets()
     qr_codes = load_qr_codes()
 
-    # 1. LỆNH XÓA MÃ QR
     match_del_qr = re.search(r"^(?:/)?del\+码\+(.+)$", text, re.IGNORECASE)
     if match_del_qr:
         target_addr = match_del_qr.group(1).strip()
@@ -428,17 +329,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 未找到该地址的二维码记录。")
         return
 
-    # 2. LỆNH GHI NHỚ MÃ QR
     match_save_qr = re.search(r"^(?:/)?记\+(.+)$", text, re.IGNORECASE)
     if match_save_qr:
         target_addr = match_save_qr.group(1).strip()
-        photo_obj = None
-
-        if update.message.photo:
-            photo_obj = update.message.photo[-1]
-        elif update.message.reply_to_message and update.message.reply_to_message.photo:
-            photo_obj = update.message.reply_to_message.photo[-1]
-
+        photo_obj = update.message.photo[-1] if update.message.photo else (update.message.reply_to_message.photo[-1] if update.message.reply_to_message and update.message.reply_to_message.photo else None)
         if photo_obj and target_addr:
             if chat_id not in qr_codes:
                 qr_codes[chat_id] = {}
@@ -449,95 +343,66 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 保存失败，请确保发送了图片并附带正确的地址格式。")
         return
 
-    # 3. LỆNH XEM MÃ QR
     match_get_qr = re.search(r"^码\+(.+)$", text, re.IGNORECASE)
     if match_get_qr:
         target_addr = match_get_qr.group(1).strip()
         if chat_id in qr_codes and target_addr in qr_codes[chat_id]:
-            file_id = qr_codes[chat_id][target_addr]
-            caption_text = f"<code>{target_addr}</code>"
-            await update.message.reply_photo(
-                photo=file_id, caption=caption_text, parse_mode="HTML"
-            )
+            await update.message.reply_photo(photo=qr_codes[chat_id][target_addr], caption=f"<code>{target_addr}</code>", parse_mode="HTML")
         else:
             await update.message.reply_text("❌ 未找到该地址的二维码图片。")
         return
 
     if not text:
         return
-
     text_lower = text.lower()
 
-    # 4. TÍNH TOÁN SỐ LƯỢNG KÈM 'UJ' (CNY)
     if text_lower.endswith("uj"):
         try:
-            amount_str = text_lower.replace("uj", "").strip()
-            amount = float(amount_str) if amount_str else 1.0
+            amount = float(text_lower.replace("uj", "").strip() or 1.0)
         except ValueError:
             return
-
         p2p_list = await get_binance_p2p_list("CNY", limit=10)
         if not p2p_list:
             await update.message.reply_text("❌ 无法从 Binance P2P 获取 CNY 数据。")
             return
-
         prices = [price for price, _ in p2p_list]
         lines = ["<b>[ 币安 P2P 实时报价 - 支付宝/微信 ]</b>"]
         for price, name in p2p_list:
             lines.append(f"{price:.2f}    <code>{name}</code>")
-
         top_3 = prices[:3] if len(prices) >= 3 else prices
         avg_price = sum(top_3) / len(top_3) if top_3 else 0.0
         total_cny = amount * avg_price
-
-        result_text = "\n".join(lines)
-        result_text += "\n\n<b>实时价格 (三档) :</b>\n"
-        result_text += f"{amount:,.0f} * {avg_price:.2f} = {total_cny:.2f} CNY"
-
+        result_text = "\n".join(lines) + f"\n\n<b>实时价格 (三档) :</b>\n{amount:,.0f} * {avg_price:.2f} = {total_cny:.2f} CNY"
         await update.message.reply_text(result_text, parse_mode="HTML")
         return
 
-    # 5. TÍNH TOÁN SỐ LƯỢNG KÈM 'U' (VNĐ)
     if text_lower.endswith("u"):
         try:
-            amount_str = text_lower.replace("u", "").strip()
-            amount = float(amount_str) if amount_str else 0.0
+            amount = float(text_lower.replace("u", "").strip() or 0.0)
         except ValueError:
             return
-
         if amount <= 0:
             return
-
         p2p_list = await get_binance_p2p_list("VND", limit=10)
         if not p2p_list:
             await update.message.reply_text("❌ 无法从 Binance P2P 获取数据。")
             return
-
         prices = [price for price, _ in p2p_list]
         lines = ["<b>[ 币安 P2P 实时报价 - 银行卡 ]</b>"]
         for price, name in p2p_list:
-            price_int = round(price)
-            lines.append(f"{price_int:,}    <code>{name}</code>")
-
+            lines.append(f"{round(price):,}    <code>{name}</code>")
         top_3 = prices[:3] if len(prices) >= 3 else prices
-        avg_price = sum(top_3) / len(top_3) if top_3 else 0
-        avg_price_int = round(avg_price)
+        avg_price_int = round(sum(top_3) / len(top_3)) if top_3 else 0
         total_vnd = amount * avg_price_int
-
-        result_text = "\n".join(lines)
-        result_text += "\n\n<b>实时价格 (三档) :</b>\n"
-        result_text += f"{amount:,.0f} * {avg_price_int:,} = {total_vnd:,.0f} VNĐ"
-
+        result_text = "\n".join(lines) + f"\n\n<b>实时价格 (三档) :</b>\n{amount:,.0f} * {avg_price_int:,} = {total_vnd:,.0f} VNĐ"
         await update.message.reply_text(result_text, parse_mode="HTML")
         return
 
-    # 6. LỆNH XÓA VÍ: del+...
     match_del = re.search(r"^(?:/)?del\+(.+)$", text, re.IGNORECASE)
     if match_del:
         param = match_del.group(1).strip()
         parts = [p.strip() for p in param.split("+") if p.strip()]
         found_addr = None
-
         if chat_id in wallets:
             for addr, info in wallets[chat_id].items():
                 memo = info.get("memo", "")
@@ -547,153 +412,83 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         break
                 if found_addr:
                     break
-
         if found_addr:
             memo_del = wallets[chat_id][found_addr].get("memo", "")
             del wallets[chat_id][found_addr]
             save_wallets(wallets)
-
-            memo_info = f"（备注：{memo_del}）" if memo_del else ""
-            await update.message.reply_text(
-                f"🗑 <b>已删除监听地址</b>{memo_info}\n<code>{found_addr}</code>",
-                parse_mode="HTML",
-            )
+            await update.message.reply_text(f"🗑 <b>已删除监听地址</b>{'（备注：' + memo_del + '）' if memo_del else ''}\n<code>{found_addr}</code>", parse_mode="HTML")
         else:
             await update.message.reply_text("❌ 未找到对应的地址或备注。")
         return
 
-    # 7. LỆNH THÊM VÍ: add+địa_chỉ+ghi_chú
-    match_add = re.search(
-        r"^(?:/)?add\+([T][a-zA-Z0-9]{33})(?:\+([^\n\s]+))?", text, re.IGNORECASE
-    )
+    match_add = re.search(r"^(?:/)?add\+([T][a-zA-Z0-9]{33})(?:\+([^\n\s]+))?", text, re.IGNORECASE)
     if match_add:
         address = match_add.group(1).strip()
         memo = match_add.group(2).strip() if match_add.group(2) else ""
-
         usdt, trx = await get_wallet_balance(address)
         if usdt is None:
             await update.message.reply_text("⚠️ API 查询余额超时或出错。")
             return
-
         if chat_id not in wallets:
             wallets[chat_id] = {}
-
         now_str = datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        today_str = datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-
         wallets[chat_id][address] = {
-            "memo": memo,
-            "last_usdt": usdt,
-            "last_trx": trx,
-            "added_at": now_str,
-            "last_date": today_str,
-            "total_in": 0.0,
-            "total_out": 0.0
+            "memo": memo, "last_usdt": usdt, "last_trx": trx,
+            "added_at": now_str, "last_date": datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d"),
+            "total_in": 0.0, "total_out": 0.0
         }
         save_wallets(wallets)
-
-        memo_text = f"（备注：{memo}）" if memo else ""
-        reply_msg = (
-            f"✅ 已添加监听地址{memo_text}\n"
-            f"<code>{address}</code>\n\n"
-            f"🕒 创建时间：{now_str}\n"
-            f"💰 USDT：{usdt:,.2f}\n"
-            f"⚡️ TRX：{trx:,.2f}"
-        )
-        await update.message.reply_text(reply_msg, parse_mode="HTML")
+        await update.message.reply_text(f"✅ 已添加监听地址{'（备注：' + memo + '）' if memo else ''}\n<code>{address}</code>\n\n🕒 创建时间：{now_str}\n💰 USDT：{usdt:,.2f}\n⚡️ TRX：{trx:,.2f}", parse_mode="HTML")
         return
 
-    # 8. LỆNH TÍNH TOÁN LẠI TOÀN BỘ TRONG NGÀY
     match_stat = re.search(r"^(.+?)\s*(?:统计|tong)$", text, re.IGNORECASE)
     if match_stat:
         query = match_stat.group(1).strip()
         found_addr = None
-
         if chat_id in wallets:
             for addr, info in wallets[chat_id].items():
-                if (
-                    addr.lower() == query.lower()
-                    or info.get("memo", "").lower() == query.lower()
-                ):
+                if addr.lower() == query.lower() or info.get("memo", "").lower() == query.lower():
                     found_addr = addr
                     break
-
         if not found_addr and re.match(r"^T[a-zA-Z0-9]{33}$", query):
             found_addr = query
-
         if not found_addr:
             await update.message.reply_text("❌ 未找到指定地址。")
             return
-
         total_in, total_out, profit = await recalculate_today_from_chain(found_addr)
-        
-        today_str = datetime.datetime.now(CHINA_TZ).strftime("%Y-%m-%d")
-        if chat_id in wallets and found_addr in wallets[chat_id]:
-            wallets[chat_id][found_addr]["last_date"] = today_str
-            wallets[chat_id][found_addr]["total_in"] = total_in
-            wallets[chat_id][found_addr]["total_out"] = total_out
-            save_wallets(wallets)
-
         curr_usdt, curr_trx = await get_wallet_balance(found_addr)
-        curr_usdt = curr_usdt if curr_usdt is not None else 0.0
-        curr_trx = curr_trx if curr_trx is not None else 0.0
-
-        reply_stat = (
-            f"📊 <b>今日数据统计重新计算</b>\n\n"
-            f"地址: <code>{found_addr}</code>\n\n"
-            f"今日收入：<b>{total_in:,.2f} USDT / 0 TRX</b>\n"
-            f"今日支出：<b>{total_out:,.2f} USDT / 0 TRX</b>\n"
-            f"今日利润：<b>{profit:,.2f} USDT / 0 TRX</b>\n\n"
-            f"💰 USDT 余额: <b>{curr_usdt:,.2f}</b>\n"
-            f"⚡ TRX 余额: <b>{curr_trx:,.2f}</b>"
-        )
-        await update.message.reply_text(reply_stat, parse_mode="HTML")
+        await update.message.reply_text(f"📊 <b>今日数据统计重新计算</b>\n\n地址: <code>{found_addr}</code>\n\n今日收入：<b>{total_in:,.2f} USDT / 0 TRX</b>\n今日支出：<b>{total_out:,.2f} USDT / 0 TRX</b>\n今日利润：<b>{profit:,.2f} USDT / 0 TRX</b>\n\n💰 USDT 余额: <b>{(curr_usdt or 0.0):,.2f}</b>\n⚡ TRX 余额: <b>{(curr_trx or 0.0):,.2f}</b>", parse_mode="HTML")
         return
 
-    # 9. TRA CỨU LỊCH SỬ GIAO DỊCH
     match_tx = re.search(r"^(.+?)\s*交易$", text, re.IGNORECASE)
     if match_tx:
         query = match_tx.group(1).strip()
         found_addr = None
-
         if chat_id in wallets:
             for addr, info in wallets[chat_id].items():
-                if (
-                    addr.lower() == query.lower()
-                    or info.get("memo", "").lower() == query.lower()
-                ):
+                if addr.lower() == query.lower() or info.get("memo", "").lower() == query.lower():
                     found_addr = addr
                     break
-
         if not found_addr and re.match(r"^T[a-zA-Z0-9]{33}$", query):
             found_addr = query
-
         if not found_addr:
             await update.message.reply_text("❌ 未找到指定地址。")
             return
-
         tx_history = await get_recent_transactions_today(found_addr, limit=5)
         if not tx_history:
             await update.message.reply_text("今日无交易")
             return
-
-        reply_tx = f"<code>{found_addr}</code> 交易\n\n" + "\n".join(tx_history)
-        await update.message.reply_text(reply_tx, parse_mode="HTML")
+        await update.message.reply_text(f"<code>{found_addr}</code> 交易\n\n" + "\n".join(tx_history), parse_mode="HTML")
         return
 
-    # 10. TỰ ĐỘNG BẮT VÍ VÀ TRA CỨU
     clean_addr = None
     tron_match = re.search(r"\b(T[a-zA-Z0-9]{33})\b", raw_text)
     if tron_match:
         clean_addr = tron_match.group(1)
     else:
-        invalid_tron_match = re.search(r"\b(T[a-zA-Z0-9]{10,50})\b", raw_text)
-        if invalid_tron_match:
-            await update.message.reply_text(
-                "❌ 地址格式不正确（必须为 34 位 TRX 地址）。", parse_mode="HTML"
-            )
+        if re.search(r"\b(T[a-zA-Z0-9]{10,50})\b", raw_text):
+            await update.message.reply_text("❌ 地址格式不正确（必须为 34 位 TRX 地址）。", parse_mode="HTML")
             return
-
         match_check = re.search(r"^查\s*(.+)$", text, re.IGNORECASE)
         if match_check:
             query = match_check.group(1).strip()
@@ -708,54 +503,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if usdt is None:
             await update.message.reply_text("⚠️ API 查询余额失败，请检查网络或地址。", parse_mode="HTML")
             return
+        await update.message.reply_text(f"✅<code>{clean_addr}</code>\n\n💰 USDT：{usdt:,.2f}\n⚡ TRX：{trx:,.2f}", parse_mode="HTML")
 
-        reply_simple = (
-            f"✅<code>{clean_addr}</code>\n\n💰 USDT：{usdt:,.2f}\n⚡ TRX：{trx:,.2f}"
-        )
-        await update.message.reply_text(reply_simple, parse_mode="HTML")
-
-
-# -------------------------------------------------------------
-# KHỞI CHẠY BOT (ĐÃ SỬA DỌN DẸP WEBHOOK AN TOÀN TRƯỚC Khi POLLING)
-# -------------------------------------------------------------
 async def run_bot():
-    # 1. Dùng Bot tạm thời xóa Webhook trên server Telegram trước
     temp_bot = Bot(token=BOT_TOKEN)
-    print("⏳ Đang dọn dẹp Webhook cũ trên Telegram server...")
     try:
         await temp_bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Đã xóa Webhook thành công!")
     except Exception as e:
         print(f"⚠️ Lỗi khi xóa Webhook: {e}")
 
-    # 2. Tạo Application chính
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # Thêm Handlers
     app.add_handler(CommandHandler("all", all_command))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
 
-    # Khởi tạo Job Queue nếu có
     if app.job_queue:
         app.job_queue.run_repeating(monitor_wallets_task, interval=30, first=1)
 
-    # 3. Khởi chạy Polling
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True, poll_interval=1.0)
     print("🚀 Bot đã khởi chạy thành công và đang chờ tin nhắn...")
 
-    # Duy trì vòng lặp hoạt động trong Colab
     try:
         while True:
             await asyncio.sleep(3600)
     except (asyncio.CancelledError, KeyboardInterrupt):
-        print("🛑 Đang tắt bot...")
         await app.updater.stop()
         await app.stop()
         await app.shutdown()
-        print("✅ Đã dừng Bot an toàn.")
 
-
-# Chạy trực tiếp trong Colab
-await run_bot()
+if __name__ == "__main__":
+    asyncio.run(run_bot())
