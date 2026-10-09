@@ -4,6 +4,7 @@ import json
 import os
 import re
 import aiohttp
+from aiohttp import web
 import nest_asyncio
 import pytz
 from telegram import Bot, Update
@@ -505,7 +506,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await update.message.reply_text(f"✅<code>{clean_addr}</code>\n\n💰 USDT：{usdt:,.2f}\n⚡ TRX：{trx:,.2f}", parse_mode="HTML")
 
-async def run_bot():
+# Tạo một Web Server giả lập để đáp ứng yêu cầu mở cổng của Render Web Service miễn phí
+async def handle_web_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def main():
+    # 1. Khởi động Web Server giả lập trên cổng mà Render cấp phát tự động qua biến môi trường PORT
+    port = int(os.environ.get("PORT", 10000))
+    web_app = web.Application()
+    web_app.add_routes([web.get("/", handle_web_ping)])
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Web Server giả lập đã mở thành công trên cổng {port}")
+
+    # 2. Khởi chạy Telegram Bot
     temp_bot = Bot(token=BOT_TOKEN)
     try:
         await temp_bot.delete_webhook(drop_pending_updates=True)
@@ -522,15 +538,10 @@ async def run_bot():
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True, poll_interval=1.0)
-    print("🚀 Bot đã khởi chạy thành công và đang chờ tin nhắn...")
+    print("🚀 Bot đã khởi chạy thành công và đang chạy vĩnh viễn...")
 
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (asyncio.CancelledError, KeyboardInterrupt):
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+    # Giữ vòng lặp chạy mãi mãi
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(run_bot())
+    asyncio.run(main())
